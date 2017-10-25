@@ -98,6 +98,13 @@
 //default values
 #define INITIAL_MICROSTEPPING 0x3ul //32th microstepping
 
+#define SPI4_SCK_PIN       76
+#define SPI4_MISO_PIN      77
+#define SPI4_MOSI_PIN      78
+
+SPIClass SPI_4(SPI4, SPI4_MOSI_PIN, SPI4_MISO_PIN, SPI4_SCK_PIN);
+#define STEPPER_SPI SPI_4
+
 //debuging output
 //#define DEBUG
 
@@ -176,11 +183,8 @@ void TMC26XStepper::start() {
 	digitalWrite(cs_pin, HIGH);   
 	
 	//configure the SPI interface
-    SPI.setBitOrder(MSBFIRST);
-	SPI.setClockDivider(SPI_CLOCK_DIV8);
-	//todo this does not work reliably - find a way to foolprof set it (e.g. while communicating
-	//SPI.setDataMode(SPI_MODE3);
-	SPI.begin();
+	STEPPER_SPI.begin();
+	STEPPER_SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE3));
 		
 	//set the initial values
 	send262(driver_control_register_value); 
@@ -248,7 +252,7 @@ char TMC26XStepper::move(void) {
   if(this->steps_left>0) {
       unsigned long time = micros();  
 	  // move only if the appropriate delay has passed:
- 	 if (time >= this->next_step_time) {
+ 	 if(abs(time - this->last_step_time) > this->step_delay) {
    	 	// increment or decrement the step number,
    	 	// depending on direction:
    	 	if (this->direction == 1) {
@@ -372,7 +376,7 @@ char TMC26XStepper::getStallGuardThreshold(void) {
     //convert the value to an int to correctly handle the negative numbers
     char result = stall_guard_threshold;
     //check if it is negative and fill it up with leading 1 for proper negative number representation
-    if (result & _BV(6)) {
+    if (result & (1 << (6))) {
         result |= 0xC0;
     }
     return result;
@@ -525,7 +529,7 @@ void TMC26XStepper::setConstantOffTimeChopper(char constant_off_time, char blank
 	}
 	//if started we directly send it to the motor
 	if (started) {
-		send262(driver_control_register_value);
+		send262(chopper_config_register);
 	}	
 }
 
@@ -605,7 +609,7 @@ void TMC26XStepper::setSpreadCycleChopper(char constant_off_time, char blank_tim
 	chopper_config_register |= ((unsigned long)blank_value) << BLANK_TIMING_SHIFT;
 	//if started we directly send it to the motor
 	if (started) {
-		send262(driver_control_register_value);
+		send262(chopper_config_register);
 	}	
 }
 
@@ -629,7 +633,7 @@ void TMC26XStepper::setRandomOffTime(char value) {
 	}
 	//if started we directly send it to the motor
 	if (started) {
-		send262(driver_control_register_value);
+		send262(chopper_config_register);
 	}	
 }	
 
@@ -953,12 +957,12 @@ inline void TMC26XStepper::send262(unsigned long datagram) {
 	unsigned long i_datagram;
     
     //preserver the previous spi mode
-    unsigned char oldMode =  SPCR & SPI_MODE_MASK;
+    //unsigned char oldMode =  SPCR & SPI_MODE_MASK;
 	
     //if the mode is not correct set it to mode 3
-    if (oldMode != SPI_MODE3) {
-        SPI.setDataMode(SPI_MODE3);
-    }
+    //if (oldMode != SPI_MODE3) {
+    //    SPI.setDataMode(SPI_MODE3);
+    //}
 	
 	//select the TMC driver
 	digitalWrite(cs_pin,LOW);
@@ -972,11 +976,11 @@ inline void TMC26XStepper::send262(unsigned long datagram) {
 #endif
 
 	//write/read the values
-	i_datagram = SPI.transfer((datagram >> 16) & 0xff);
+	i_datagram = STEPPER_SPI.transfer((datagram >> 16) & 0xff);
 	i_datagram <<= 8;
-	i_datagram |= SPI.transfer((datagram >>  8) & 0xff);
+	i_datagram |= STEPPER_SPI.transfer((datagram >>  8) & 0xff);
 	i_datagram <<= 8;
-	i_datagram |= SPI.transfer((datagram) & 0xff);
+	i_datagram |= STEPPER_SPI.transfer((datagram) & 0xff);
 	i_datagram >>= 4;
 	
 #ifdef DEBUG
@@ -989,9 +993,9 @@ inline void TMC26XStepper::send262(unsigned long datagram) {
     
     //restore the previous SPI mode if neccessary
     //if the mode is not correct set it to mode 3
-    if (oldMode != SPI_MODE3) {
-        SPI.setDataMode(oldMode);
-    }
+    //if (oldMode != SPI_MODE3) {
+    //    SPI.setDataMode(oldMode);
+    //}
 
 	
 	//store the datagram as status result
